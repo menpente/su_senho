@@ -1,37 +1,48 @@
 import streamlit as st
-from langchain.llms import OpenAI
+import os
+import uuid
+import tempfile
+import json
+from datetime import datetime
+
 from langchain.vectorstores import FAISS
 from langchain.embeddings import HuggingFaceEmbeddings
 from langchain.chains import RetrievalQA
 from langchain.document_loaders import PyPDFLoader, Docx2txtLoader, TextLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-import tempfile
-import json
-from datetime import datetime
-import os
 
-# Setup
+from groq_llm import GroqLLM
+
+# --- CONFIGURATION ---
 st.set_page_config(page_title="AI Legal Assistant", layout="wide")
-st.title("🧑‍⚖️ AI Legal Assistant")
+st.title("⚖️ AI Legal Assistant")
 
-# Session state
+DB_PATH = "vector_store/faiss_index"
+CHAT_LOG_DIR = "chat_logs"
+os.makedirs(CHAT_LOG_DIR, exist_ok=True)
+
+# --- SESSION STATE ---
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
-# Initialize embedding and vectorstore
-embedding_model = HuggingFaceEmbeddings()
-db_path = "vector_store/faiss_index"
+if "user_id" not in st.session_state:
+    st.session_state.user_id = str(uuid.uuid4())
 
-if os.path.exists(db_path):
-    vectordb = FAISS.load_local(db_path, embedding_model)
+history_file = os.path.join(CHAT_LOG_DIR, f"{st.session_state.user_id}.jsonl")
+
+# --- EMBEDDINGS + VECTOR DB ---
+embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+
+if os.path.exists(DB_PATH):
+    vectordb = FAISS.load_local(DB_PATH, embedding_model)
 else:
     vectordb = FAISS.from_texts([], embedding_model)
-    vectordb.save_local(db_path)
+    vectordb.save_local(DB_PATH)
 
 retriever = vectordb.as_retriever()
 
-# File uploader
-uploaded_files = st.file_uploader("📄 Upload Legal Files", type=["pdf", "docx", "txt"], accept_multiple_files=True)
+# --- FILE UPLOAD ---
+uploaded_files = st.file_uploader("📄 Upload Legal Documents", type=["pdf", "docx", "txt"], accept_multiple_files=True)
 
 if uploaded_files:
     docs = []
@@ -39,72 +50,55 @@ if uploaded_files:
         with tempfile.NamedTemporaryFile(delete=False) as tmp:
             tmp.write(file.read())
             tmp_path = tmp.name
-        # Detect file type
+
+        # Loader based on extension
         if file.name.endswith(".pdf"):
             loader = PyPDFLoader(tmp_path)
         elif file.name.endswith(".docx"):
             loader = Docx2txtLoader(tmp_path)
         else:
             loader = TextLoader(tmp_path)
+
         docs.extend(loader.load())
         os.unlink(tmp_path)
 
-    # Chunk and embed
+    # Chunk and add to vector DB
     splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
     split_docs = splitter.split_documents(docs)
     vectordb.add_documents(split_docs)
-    vectordb.save_local(db_path)
-    st.success(f"✅ {len(uploaded_files)} file(s) processed and added to memory.")
+    vectordb.save_local(DB_PATH)
+    st.success(f"✅ {len(uploaded_files)} file(s) processed and indexed.")
 
-# Chat input
-user_input = st.chat_input("Ask a legal question...")
+# --- CHAT INPUT ---
+user_input = st.chat_input("💬 Ask a legal question...")
 
 if user_input:
-    with st.spinner("Generating answer..."):
-        # LLM via Groq (using Langchain's generic OpenAI wrapper here)
-        llm = OpenAI(model_name="llama3", temperature=0.2, openai_api_key=os.getenv("GROQ_API_KEY"))
-
+    with st.spinner("Generating legal response..."):
+        llm = GroqLLM(model="llama3", temperature=0.2)
         qa_chain = RetrievalQA.from_chain_type(llm=llm, retriever=retriever)
         response = qa_chain.run(user_input)
 
         # Log interaction
-        log = {
+        log_entry = {
             "timestamp": datetime.now().isoformat(),
             "query": user_input,
-            "response": response,
+            "response": response
         }
-        with open("chat_history.jsonl", "a") as f:
-            json.dump(log, f)
+        with open(history_file, "a") as f:
+            json.dump(log_entry, f)
             f.write("\n")
 
-        # Update chat history
+        # Update UI history
         st.session_state.chat_history.append(("user", user_input))
         st.session_state.chat_history.append(("ai", response))
 
-# Display chat
+# --- CHAT DISPLAY ---
 for sender, msg in st.session_state.chat_history:
     with st.chat_message(sender):
         st.markdown(msg)
 
-# Add to top
-import uuid
-
-user_id = st.session_state.get("user_id", str(uuid.uuid4()))
-st.session_state["user_id"] = user_id
-
-history_file = f"chat_logs/{user_id}.jsonl"
-
-def log_interaction(query, response):
-    with open(history_file, "a") as f:
-        json.dump({
-            "timestamp": datetime.now().isoformat(),
-            "query": query,
-            "response": response
-        }, f)
-        f.write("\n")
-
-# Download conversation
+# --- CHAT DOWNLOAD ---
 if os.path.exists(history_file):
     with open(history_file) as f:
         chat_log = f.read()
-    st.download_button("📥 Download Chat Log", data=chat_log, file_name=f"chat_{user_id}.jsonl", mime="application/json")
+    st.download_button("📥 Download Chat History", data=chat_log, file_name=f"chat_{st.session_state.user_id}.jsonl", mime="application/json")
