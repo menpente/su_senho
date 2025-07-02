@@ -85,3 +85,26 @@ if user_input:
 for sender, msg in st.session_state.chat_history:
     with st.chat_message(sender):
         st.markdown(msg)
+
+# Add to top
+import uuid
+
+user_id = st.session_state.get("user_id", str(uuid.uuid4()))
+st.session_state["user_id"] = user_id
+
+history_file = f"chat_logs/{user_id}.jsonl"
+
+def log_interaction(query, response):
+    with open(history_file, "a") as f:
+        json.dump({
+            "timestamp": datetime.now().isoformat(),
+            "query": query,
+            "response": response
+        }, f)
+        f.write("\n")
+
+# Download conversation
+if os.path.exists(history_file):
+    with open(history_file) as f:
+        chat_log = f.read()
+    st.download_button("📥 Download Chat Log", data=chat_log, file_name=f"chat_{user_id}.jsonl", mime="application/json")
