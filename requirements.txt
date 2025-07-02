@@ -1,0 +1,10 @@
+streamlit
+streamlit-chat
+langchain
+faiss-cpu
+sentence-transformers
+pypdf
+python-docx
+docx2txt
+openai
+requests
