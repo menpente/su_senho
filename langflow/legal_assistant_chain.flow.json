@@ -1,0 +1,49 @@
+{
+  "nodes": [
+    {
+      "id": "input_node",
+      "type": "InputNode",
+      "name": "User Query",
+      "output_type": "str"
+    },
+    {
+      "id": "embed_node",
+      "type": "EmbeddingRetriever",
+      "name": "Retriever",
+      "config": {
+        "embedding": "sentence-transformers/all-MiniLM-L6-v2",
+        "persist_directory": "vector_store/faiss_index",
+        "k": 5
+      },
+      "inputs": {
+        "query": "input_node"
+      }
+    },
+    {
+      "id": "prompt_node",
+      "type": "PromptTemplate",
+      "name": "Legal Prompt",
+      "config": {
+        "template": "You are an AI legal assistant. Answer precisely and cite references if relevant.\n\nContext:\n{context}\n\nQuestion:\n{question}",
+        "input_variables": ["context", "question"]
+      },
+      "inputs": {
+        "context": "embed_node",
+        "question": "input_node"
+      }
+    },
+    {
+      "id": "groq_llm_node",
+      "type": "LLM",
+      "name": "Groq LLM",
+      "config": {
+        "model_name": "llama3",
+        "provider": "openai",
+        "openai_api_key": "${env:GROQ_API_KEY}"
+      },
+      "inputs": {
+        "prompt": "prompt_node"
+      }
+    }
+  ]
+}
